@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>مذيع البث</title>
+<style>
+  /* ===== Design tokens =====
+     Layout concept: a 2.5D character (flat layered CSS shapes on a perspective
+     stage, gently swaying) — bright, glowing, impossible to render as a black
+     void the way a dim WebGL scene could. Everything else behind one gear icon. */
+  :root{
+    --bg-1:#0b1c3a; --bg-2:#123a66; --bg-3:#060f22;
+    --card:#132544; --fg:#f2f7ff; --fg-dim:#aec2e0;
+    --accent-a:#ffffff; --accent-b:#2b8fff; --glow:#7fd1ff; --body-color:#2b8fff;
+    --danger:#ff3b3b; --border:#28406a;
+    --font-body:'Segoe UI', Tahoma, sans-serif;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --bg-1:#dcebff; --bg-2:#eaf4ff; --bg-3:#f5faff; --card:#ffffff;
+      --fg:#111c30; --fg-dim:#50647f; --border:#d6e5fb; color-scheme: light;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg-1:#dcebff; --bg-2:#eaf4ff; --bg-3:#f5faff; --card:#ffffff;
+    --fg:#111c30; --fg-dim:#50647f; --border:#d6e5fb; color-scheme: light;
+  }
+  :root[data-theme="dark"]{ color-scheme: dark; }
+
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; font-family:var(--font-body); color:var(--fg); overflow:hidden;
+    background:
+      radial-gradient(90% 60% at 50% 0%, var(--bg-2), transparent 60%),
+      radial-gradient(100% 70% at 50% 100%, var(--bg-1), var(--bg-3));
+  }
+
+  /* ---------- error banner ---------- */
+  .error-banner{
+    position:fixed; left:12px; right:12px; top:calc(env(safe-area-inset-top,0px) + 10px);
+    z-index:60; background:var(--danger); color:#fff; border-radius:14px;
+    padding:13px 14px; display:flex; align-items:center; gap:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.35); font-size:13.5px; line-height:1.6;
+    animation:slidein .22s ease-out;
+  }
+  @keyframes slidein{from{transform:translateY(-14px); opacity:0;} to{transform:translateY(0); opacity:1;}}
+  .error-banner span{flex:1;}
+  .error-banner button{
+    flex:none; background:rgba(255,255,255,.22); border:none; color:#fff;
+    width:26px;height:26px;border-radius:8px; font-size:14px; cursor:pointer;
+  }
+
+  /* ---------- first-run setup ---------- */
+  .setup{
+    position:fixed; inset:0; z-index:55; background:var(--bg-3);
+    display:flex; align-items:center; justify-content:center; padding:24px;
+    padding-top:max(24px, env(safe-area-inset-top,0px)); padding-bottom:max(24px, env(safe-area-inset-bottom,0px));
+  }
+  .setup-card{width:100%; max-width:380px;}
+  .setup-card h1{font-size:19px; margin:0 0 4px; font-weight:800;}
+  .setup-card p.sub{color:var(--fg-dim); font-size:13px; margin:0 0 20px; line-height:1.7;}
+  .field{margin-bottom:14px;}
+  .field label{display:block; font-size:12.5px; color:var(--fg-dim); margin-bottom:6px;}
+  .field input, .field textarea, .field select{
+    width:100%; background:var(--card); border:1px solid var(--border); color:var(--fg);
+    border-radius:12px; padding:12px 13px; font-size:14px; font-family:var(--font-body); resize:vertical;
+  }
+  .field input:focus, .field textarea:focus, .field select:focus{outline:2px solid var(--accent-a); outline-offset:1px;}
+  .hint{font-size:11.5px; color:var(--fg-dim); margin-top:6px; line-height:1.7;}
+  .hint a{color:var(--accent-a);}
+  .hint.err{color:var(--danger);}
+  .continuebtn{
+    width:100%; padding:14px; border-radius:14px; border:none; margin-top:4px;
+    background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); color:#fff;
+    font-weight:800; font-size:15.5px; cursor:pointer;
+  }
+  .continuebtn:active{transform:scale(.98);}
+
+  /* ---------- 2.5D stage ---------- */
+  .stage3d{
+    position:fixed; inset:0; z-index:1;
+    display:flex; align-items:center; justify-content:center;
+    perspective:1100px;
+  }
+  .rig{
+    position:relative; width:320px; height:320px;
+    transform-style:preserve-3d;
+    animation:sway 6s ease-in-out infinite;
+  }
+  @keyframes sway{
+    0%,100%{ transform:rotateY(-7deg) rotateX(1deg); }
+    50%{ transform:rotateY(7deg) rotateX(-1deg); }
+  }
+  .halo{
+    position:absolute; left:50%; top:50%; width:520px; height:520px;
+    transform:translate(-50%,-50%) translateZ(-120px);
+    background:radial-gradient(circle, var(--glow) 0%, rgba(127,209,255,.25) 35%, transparent 70%);
+    filter:blur(6px); opacity:.75;
+  }
+  .part{ position:absolute; left:50%; transform-style:preserve-3d; }
+
+  .head{
+    width:224px; height:206px; top:40px; translate:-50% 0;
+    transform:translateZ(60px);
+    background:linear-gradient(165deg, #2a3a52, #141d2c);
+    border-radius:50%;
+    box-shadow:0 0 54px -4px var(--glow), inset 0 -16px 30px rgba(0,0,0,.4);
+  }
+  .shades{
+    width:176px; height:56px; top:80px; translate:-50% 0;
+    transform:translateZ(65px);
+    display:flex; gap:12px; justify-content:center;
+  }
+  .lens{
+    width:76px; height:50px; border-radius:25px;
+    background:linear-gradient(160deg,#1a1a22,#000);
+    box-shadow:0 0 20px rgba(127,209,255,.5), inset 0 0 12px rgba(255,255,255,.08);
+  }
+  .mouth{
+    width:102px; height:14px; top:150px; translate:-50% 0;
+    transform:translateZ(65px);
+    background:#1a0410; border-radius:0 0 30px 30px;
+    box-shadow:0 2px 10px rgba(0,0,0,.4);
+    transition:height .08s, border-radius .08s;
+  }
+  .teeth{
+    width:72px; height:7px; top:150px; translate:-50% 0;
+    transform:translateZ(66px);
+    background:#f2eee8; border-radius:4px; opacity:0;
+    transition:opacity .08s;
+  }
+
+  /* ---------- chrome (hides on tap) ---------- */
+  .chrome{position:fixed; inset:0; z-index:5; pointer-events:none; transition:opacity .2s;}
+  body.hide-chrome .chrome{opacity:0; pointer-events:none;}
+  .chrome > *{pointer-events:auto;}
+
+  .corner{
+    position:fixed; top:max(14px, env(safe-area-inset-top,0px)); left:max(14px, env(safe-area-inset-left,0px));
+    display:flex; align-items:center; gap:8px; z-index:6;
+  }
+  .iconbtn{
+    width:42px;height:42px;border-radius:50%;border:1px solid var(--border);
+    background:color-mix(in srgb, var(--card) 80%, transparent); backdrop-filter:blur(8px);
+    color:var(--fg); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; font-size:18px;
+  }
+  .iconbtn:active{transform:scale(.92);}
+  .ttbadge{
+    font-size:11.5px; color:var(--fg-dim); background:color-mix(in srgb, var(--card) 80%, transparent);
+    backdrop-filter:blur(8px); border:1px solid var(--border); border-radius:999px; padding:9px 13px;
+    display:flex; align-items:center; gap:6px;
+  }
+  .ttbadge .dot{width:7px;height:7px;border-radius:50%; background:#ff4d4d;}
+  .ttbadge.on .dot{background:#38e08a; box-shadow:0 0 6px #38e08a;}
+
+  .composer{
+    position:fixed; left:max(14px, env(safe-area-inset-left,0px)); right:max(14px, env(safe-area-inset-right,0px));
+    bottom:max(14px, env(safe-area-inset-bottom,0px)); z-index:6;
+    display:flex; gap:8px;
+  }
+  .composer input{
+    flex:1; min-width:0; background:color-mix(in srgb, var(--card) 85%, transparent); backdrop-filter:blur(8px);
+    border:1px solid var(--border); color:var(--fg); border-radius:14px;
+    padding:13px 15px; font-size:14.5px; font-family:var(--font-body);
+  }
+  .composer input:focus{outline:2px solid var(--accent-a); outline-offset:1px;}
+  .sendbtn{
+    flex:none; width:48px; border-radius:14px; border:none;
+    background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); color:#fff;
+    font-size:17px; cursor:pointer;
+  }
+  .sendbtn:disabled{opacity:.5; cursor:not-allowed;}
+
+  .caption{
+    position:fixed; left:16px; right:16px; bottom:76px; z-index:6; text-align:center;
+    font-size:14px; line-height:1.6; color:var(--fg); min-height:20px; pointer-events:none;
+    text-shadow:0 1px 6px rgba(0,0,0,.4);
+  }
+
+  /* ---------- settings overlay ---------- */
+  .overlay{
+    position:fixed; inset:0; z-index:40; background:rgba(0,0,0,.55);
+    display:flex; align-items:flex-end; opacity:0; pointer-events:none; transition:opacity .2s;
+  }
+  .overlay.open{opacity:1; pointer-events:auto;}
+  .sheet{
+    width:100%; max-width:480px; margin:0 auto; background:var(--card);
+    border-radius:20px 20px 0 0; padding:18px 18px calc(18px + env(safe-area-inset-bottom,0px));
+    transform:translateY(12px); transition:transform .2s; max-height:85vh; overflow-y:auto;
+  }
+  .overlay.open .sheet{transform:translateY(0);}
+  .sheet h2{font-size:16px; margin:0 0 14px; font-weight:700;}
+  .sheet textarea{min-height:90px; line-height:1.6;}
+  .sheetbtns{display:flex; gap:8px; margin-top:4px;}
+  .btn{
+    flex:1; padding:12px; border-radius:10px; border:1px solid var(--border);
+    background:var(--bg-3); color:var(--fg); font-weight:700; font-size:13.5px; cursor:pointer;
+  }
+  .btn.primary{background:linear-gradient(135deg, var(--accent-a), var(--accent-b)); color:#fff; border:none;}
+</style>
+</head>
+<body>
+
+<div class="error-banner" id="errorBanner" role="alert" hidden>
+  <span id="errorText"></span>
+  <button id="errorClose" aria-label="إغلاق">✕</button>
+</div>
+
+<!-- ============ FIRST-RUN SETUP ============ -->
+<div class="setup" id="setupScreen">
+  <div class="setup-card">
+    <h1>قبل لا تدخل</h1>
+    <p class="sub">سجّل مفتاح Gemini واربط حساب التيك توك، وبعدها اضغط متابعة.</p>
+
+    <div class="field">
+      <label>مفتاح Gemini API</label>
+      <input type="password" id="apiKey" placeholder="الصق المفتاح هنا (AIza...)">
+      <div class="hint" id="keyHint">يُحفظ على جهازك فقط. تقدر تسوّي مفتاح من <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com</a>.</div>
+    </div>
+
+    <div class="field">
+      <label>حساب TikTok</label>
+      <input type="text" id="tiktokHandle" placeholder="@اسم_الحساب">
+      <div class="hint">اكتب المعرف بالضبط زي ما هو في تيك توك، وإذا نسيت الـ@ بنضيفه لك تلقائيًا.</div>
+    </div>
+
+    <button class="continuebtn" id="continueBtn">متابعة ←</button>
+  </div>
+</div>
+
+<!-- ============ 2.5D CHARACTER STAGE ============ -->
+<div class="stage3d" id="stage3d">
+  <div class="rig" id="rig">
+    <div class="halo"></div>
+    <div class="part head"></div>
+    <div class="part shades"><div class="lens"></div><div class="lens"></div></div>
+    <div class="part mouth" id="mouth"></div>
+    <div class="part teeth" id="teeth"></div>
+  </div>
+</div>
+
+<div class="chrome" id="chrome">
+  <div class="corner">
+    <button class="iconbtn" id="gearBtn" title="الإعدادات">⚙</button>
+    <button class="iconbtn" id="fullscreenBtn" title="ملء الشاشة">⛶</button>
+    <button class="iconbtn" id="themeBtn" title="المظهر">🌓</button>
+    <button class="iconbtn" id="liveBtn" title="اتصال بالتعليقات الحية">📡</button>
+    <div class="ttbadge" id="ttBadge"><span class="dot"></span><span id="ttBadgeText">تيك توك غير مربوط</span></div>
+    <div class="ttbadge" id="liveBadge"><span class="dot"></span><span id="liveBadgeText">الخادم المحلي غير متصل</span></div>
+  </div>
+  <div class="caption" id="caption"></div>
+  <div class="composer">
+    <input type="text" id="commenterName" placeholder="اسم المعلّق" maxlength="40" style="flex:0 0 110px;">
+    <input type="text" id="commentInput" placeholder="اكتب تعليق…" maxlength="200">
+    <button class="sendbtn" id="sendBtn">↵</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="sheet">
+    <h2>الإعدادات</h2>
+    <div class="field">
+      <label>مفتاح Gemini API</label>
+      <input type="password" id="apiKey2" placeholder="الصق المفتاح هنا (AIza...)">
+    </div>
+    <div class="field">
+      <label>حساب TikTok</label>
+      <input type="text" id="tiktokHandle2" placeholder="@اسم_الحساب">
+      <div class="hint">نفس الاسم اللي تمرره لسكربت server.js في Termux.</div>
+    </div>
+    <div class="field">
+      <label>عنوان خادم التعليقات الحية (محلي)</label>
+      <input type="text" id="wsUrl2" placeholder="ws://127.0.0.1:8765">
+      <div class="hint">هذا عنوان سكربت server.js اللي يشتغل داخل Termux على نفس الجوال. بعد تشغيله اضغط زر 📡 فوق عشان يتصل، وبعدها أي تعليق حقيقي بالبث يوصل للمذيع تلقائيًا ويرد عليه بصوته.</div>
+    </div>
+    <div class="field">
+      <label>صوت القراءة</label>
+      <select id="voiceSelect"><option value="">جاري تحميل الأصوات…</option></select>
+    </div>
+    <div class="field">
+      <label>الشخصية</label>
+      <textarea id="personaInput">شاب سعودي قوي وقادح، صوتك جريء وواثق مو خجول. تضحك كثير وبصوت عالي وسط كلامك زي "هاهاها"، وتتكلم باللهجة السعودية العامية الدارجة بس. ردودك قصيرة جدًا، جملة أو جملتين، عفوية وسريعة وفيها حزم. عندك رأي واضح بأي شي يسألونك عنه وتقوله بثقة من غير تردد أو مجاملة، ولو خالفوك أو قالوا غلطان تدافع عن رأيك بثقة أكثر. ممنوع تعتذر نهائيًا مهما صار. أحيانًا قبل ما ترد تتردد ثانية زي إنسان حقيقي وتقول "اممم" أو "يعني" أو "خلني أفكر" قبل الجملة، بس مو بكل رد. لا تذكر أبدًا إنك نموذج لغوي أو ذكاء اصطناعي أو روبوت أو برنامج. رد مباشرة على التعليق بدون مقدمات.</textarea>
+    </div>
+    <div class="field">
+      <label>المحظورون (داخل التطبيق فقط)</label>
+      <div class="hint">هذي قائمة داخلية — المذيع الذكي يتجاهل أي تعليق من هالأسماء ولا يرد عليهم. ملاحظة: هذا لا يحظرهم فعليًا من بثك على تيك توك، لأن تيك توك ما يعطي تطبيقات خارجية صلاحية حظر حقيقية؛ الحظر الفعلي لازم تسويه إنت من تطبيق تيك توك نفسه.</div>
+      <div id="bannedList" style="margin-top:8px; display:flex; flex-direction:column; gap:6px;"></div>
+    </div>
+    <div class="sheetbtns">
+      <button class="btn" id="closeSheetBtn">إغلاق</button>
+      <button class="btn primary" id="saveSheetBtn">حفظ</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ================= error banner =================
+  var errorBanner = document.getElementById('errorBanner');
+  var errorText = document.getElementById('errorText');
+  var errorTimer = null;
+  function showError(msg){
+    errorText.textContent = msg;
+    errorBanner.hidden = false;
+    clearTimeout(errorTimer);
+    errorTimer = setTimeout(function(){ errorBanner.hidden = true; }, 6000);
+  }
+  document.getElementById('errorClose').addEventListener('click', function(){
+    errorBanner.hidden = true; clearTimeout(errorTimer);
+  });
+  window.addEventListener('error', function(e){
+    showError("صار خطأ غير متوقع: " + (e.message || "—"));
+  });
+
+  // ================= state =================
+  var LS_KEY = "stream_character_settings_v4";
+  var MODEL = "gemini-3.5-flash-lite";
+  var DEFAULT_PERSONA = document.getElementById('personaInput').value;
+  var state = { apiKey:"", tiktokHandle:"", voiceURI:"", persona: DEFAULT_PERSONA, bannedUsers: [], wsUrl: "ws://127.0.0.1:8765" };
+
+  function loadState(){
+    try{
+      var raw = localStorage.getItem(LS_KEY);
+      if(raw) Object.assign(state, JSON.parse(raw));
+    }catch(e){}
+  }
+  loadState();
+
+  function persist(){
+    try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){}
+  }
+
+  function normalizeHandle(h){
+    h = (h || "").trim();
+    if(!h) return "";
+    if(h[0] !== '@') h = '@' + h;
+    return h;
+  }
+
+  var ttBadge = document.getElementById('ttBadge');
+  var ttBadgeText = document.getElementById('ttBadgeText');
+  function refreshTtBadge(){
+    if(state.tiktokHandle){
+      ttBadge.classList.add('on');
+      ttBadgeText.textContent = "مربوط بـ " + state.tiktokHandle;
+    } else {
+      ttBadge.classList.remove('on');
+      ttBadgeText.textContent = "تيك توك غير مربوط";
+    }
+  }
+
+  // ================= banned users (app-level only, see note in settings) =================
+  var bannedListEl = document.getElementById('bannedList');
+  function isBanned(name){
+    name = (name || "").trim().toLowerCase();
+    if(!name) return false;
+    return state.bannedUsers.some(function(b){ return b.name.toLowerCase() === name; });
+  }
+  function banUser(name, reason){
+    name = (name || "").trim();
+    if(!name || isBanned(name)) return;
+    state.bannedUsers.push({ name: name, reason: reason || "", time: Date.now() });
+    persist();
+    renderBannedList();
+  }
+  function unbanUser(name){
+    state.bannedUsers = state.bannedUsers.filter(function(b){ return b.name !== name; });
+    persist();
+    renderBannedList();
+  }
+  function renderBannedList(){
+    if(!bannedListEl) return;
+    if(!state.bannedUsers.length){
+      bannedListEl.innerHTML = '<div class="hint">ما فيه أحد محظور حاليًا.</div>';
+      return;
+    }
+    bannedListEl.innerHTML = "";
+    state.bannedUsers.forEach(function(b){
+      var row = document.createElement('div');
+      row.style.cssText = "display:flex; align-items:center; gap:8px; background:var(--bg-3); border:1px solid var(--border); border-radius:10px; padding:8px 10px;";
+      var label = document.createElement('span');
+      label.style.cssText = "flex:1; font-size:13px;";
+      label.textContent = b.name + (b.reason ? " — " + b.reason : "");
+      var unbanBtn = document.createElement('button');
+      unbanBtn.className = 'btn';
+      unbanBtn.style.cssText = "flex:none; padding:6px 10px; font-size:12px;";
+      unbanBtn.textContent = "فك الحظر";
+      unbanBtn.addEventListener('click', function(){ unbanUser(b.name); });
+      row.appendChild(label);
+      row.appendChild(unbanBtn);
+      bannedListEl.appendChild(row);
+    });
+  }
+
+  // ================= speaking (declared early, used by greeting) =================
+  var mouthEl = document.getElementById('mouth');
+  var teethEl = document.getElementById('teeth');
+  var captionEl = document.getElementById('caption');
+  var speaking = false;
+
+  function setSpeaking(on){
+    speaking = on;
+    document.body.classList.toggle('speaking', on);
+  }
+
+  var voiceSelect = document.getElementById('voiceSelect');
+  function speak(text){
+    captionEl.textContent = text;
+    if(!('speechSynthesis' in window)){
+      showError("المتصفح ما يدعم نطق الصوت، بس الرد النصي ظاهر.");
+      return;
+    }
+    try{ window.speechSynthesis.cancel(); }catch(e){}
+    var utter = new SpeechSynthesisUtterance(text);
+    var voices = window.speechSynthesis.getVoices();
+    var chosen = voices.find(function(v){ return v.voiceURI === voiceSelect.value; });
+    if(chosen){ utter.voice = chosen; utter.lang = chosen.lang; }
+    else { utter.lang = "ar-SA"; }
+    utter.rate = 1.05;
+    utter.pitch = 0.92;
+    utter.onstart = function(){ setSpeaking(true); };
+    utter.onend = function(){ setSpeaking(false); };
+    utter.onerror = function(){
+      setSpeaking(false);
+      showError("صار اضطراب في نطق الصوت، جرّب صوت ثاني من الإعدادات.");
+    };
+    window.speechSynthesis.speak(utter);
+  }
+
+  // ================= first-run setup =================
+  var setupScreen = document.getElementById('setupScreen');
+  var keyHint = document.getElementById('keyHint');
+
+  if(state.apiKey){
+    setupScreen.style.display = 'none';
+    refreshTtBadge();
+  }
+
+  document.getElementById('continueBtn').addEventListener('click', function(){
+    var key = document.getElementById('apiKey').value.trim();
+    var handle = normalizeHandle(document.getElementById('tiktokHandle').value);
+    if(!key){
+      keyHint.textContent = "لازم تحط مفتاح Gemini API قبل لا نكمل.";
+      keyHint.classList.add('err');
+      showError("محتاج مفتاح Gemini API قبل لا نكمل.");
+      document.getElementById('apiKey').focus();
+      return;
+    }
+    state.apiKey = key;
+    state.tiktokHandle = handle;
+    persist();
+    document.getElementById('apiKey2').value = key;
+    document.getElementById('tiktokHandle2').value = handle;
+    refreshTtBadge();
+    setupScreen.style.display = 'none';
+    speak("هلا والله! وش عندكم اليوم؟ هاهاها دزّوا التعليقات.");
+  });
+
+  // ================= settings overlay =================
+  var overlay = document.getElementById('overlay');
+  function openSheet(){
+    document.getElementById('apiKey2').value = state.apiKey || "";
+    document.getElementById('tiktokHandle2').value = state.tiktokHandle || "";
+    document.getElementById('wsUrl2').value = state.wsUrl || "ws://127.0.0.1:8765";
+    renderBannedList();
+    overlay.classList.add('open');
+  }
+  function closeSheet(){ overlay.classList.remove('open'); }
+  document.getElementById('gearBtn').addEventListener('click', openSheet);
+  document.getElementById('closeSheetBtn').addEventListener('click', closeSheet);
+  document.getElementById('saveSheetBtn').addEventListener('click', function(){
+    state.apiKey = document.getElementById('apiKey2').value.trim();
+    state.tiktokHandle = normalizeHandle(document.getElementById('tiktokHandle2').value);
+    state.voiceURI = document.getElementById('voiceSelect').value;
+    state.persona = document.getElementById('personaInput').value.trim() || DEFAULT_PERSONA;
+    state.wsUrl = document.getElementById('wsUrl2').value.trim() || state.wsUrl;
+    persist();
+    refreshTtBadge();
+    closeSheet();
+  });
+  overlay.addEventListener('click', function(e){ if(e.target === overlay) closeSheet(); });
+
+  // ================= theme =================
+  document.getElementById('themeBtn').addEventListener('click', function(){
+    var root = document.documentElement;
+    var cur = root.getAttribute('data-theme');
+    if(cur === 'dark'){ root.setAttribute('data-theme','light'); }
+    else if(cur === 'light'){ root.removeAttribute('data-theme'); }
+    else { root.setAttribute('data-theme','dark'); }
+  });
+
+  // ================= fullscreen / hide chrome =================
+  function enterImmersive(){
+    document.body.classList.add('hide-chrome');
+    try{
+      var p = document.documentElement.requestFullscreen();
+      if(p && p.catch) p.catch(function(){ /* not supported, chrome still hides */ });
+    }catch(e){}
+  }
+  document.getElementById('fullscreenBtn').addEventListener('click', enterImmersive);
+  document.getElementById('stage3d').addEventListener('click', function(){
+    document.body.classList.toggle('hide-chrome');
+  });
+  document.addEventListener('fullscreenchange', function(){
+    if(!document.fullscreenElement) document.body.classList.remove('hide-chrome');
+  });
+
+  // ================= voices =================
+  function pickDefaultMaleArabic(list){
+    var maleHints = /male|محمد|خالد|hamed|majed|tarek/i;
+    var femaleHints = /female|زينب|سلمى|laila|salma|zeina|hoda|amira/i;
+    var guy = list.find(function(v){ return maleHints.test(v.name); });
+    if(guy) return guy.voiceURI;
+    var notFem = list.find(function(v){ return !femaleHints.test(v.name); });
+    return notFem ? notFem.voiceURI : (list[0] ? list[0].voiceURI : "");
+  }
+  function populateVoices(){
+    if(!('speechSynthesis' in window)) return;
+    var voices = window.speechSynthesis.getVoices();
+    if(!voices.length) return;
+    voiceSelect.innerHTML = "";
+    var arVoices = voices.filter(function(v){ return /^ar/i.test(v.lang); });
+    var list = arVoices.length ? arVoices : voices;
+    list.forEach(function(v){
+      var opt = document.createElement('option');
+      opt.value = v.voiceURI;
+      opt.textContent = v.name + " (" + v.lang + ")";
+      voiceSelect.appendChild(opt);
+    });
+    if(state.voiceURI && list.some(function(v){return v.voiceURI===state.voiceURI;})){
+      voiceSelect.value = state.voiceURI;
+    } else {
+      voiceSelect.value = pickDefaultMaleArabic(list);
+    }
+  }
+  if('speechSynthesis' in window){
+    populateVoices();
+    window.speechSynthesis.onvoiceschanged = populateVoices;
+  } else {
+    voiceSelect.innerHTML = '<option value="">المتصفح ما يدعم نطق الصوت</option>';
+  }
+
+  // ================= mouth animation loop (CSS-driven, always visible) =================
+  var clockStart = performance.now();
+  function animateMouth(){
+    requestAnimationFrame(animateMouth);
+    var t = (performance.now() - clockStart) / 1000;
+    var openAmt;
+    if(speaking){
+      openAmt = Math.abs(Math.sin(t * 13)) * 20 + 6; // px, big laugh while actually talking
+    } else {
+      openAmt = Math.abs(Math.sin(t * 2.1)) * 7 + 5; // a constant low chuckle, never flat
+    }
+    mouthEl.style.height = openAmt + "px";
+    mouthEl.style.borderRadius = (openAmt > 16 ? "24px" : "0 0 30px 30px");
+    teethEl.style.opacity = openAmt > 14 ? Math.min((openAmt - 14) / 12, 1) : 0;
+  }
+  animateMouth();
+
+  // ================= Gemini call (real network request, with function-calling) =================
+  var TOOL_INSTRUCTIONS = "\n\nعندك أداة اسمها حظر_معلق تقدر تستخدمها إذا شخص يسيء بشكل واضح (سب صريح، تحرش، سبام متكرر، تهديد). "+
+    "استخدمها بحذر ونادر، مو لأي نكتة أو كلام عادي. إذا استخدمتها، رد كمان بجملة قصيرة عادية توضح إنك حذّرت/طردت الشخص بأسلوبك المعتاد.";
+  var TOOLS = [{
+    functionDeclarations: [{
+      name: "حظر_معلق",
+      description: "يحظر معلّق داخل التطبيق فقط (يوقف المذيع الذكي عن الرد عليه لاحقًا) بسبب إساءة واضحة. هذا لا يحظره فعليًا من بث تيك توك.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          name: { type: "STRING", description: "اسم المعلّق المطلوب حظره بالضبط" },
+          reason: { type: "STRING", description: "سبب الحظر باختصار" }
+        },
+        required: ["name"]
+      }
+    }]
+  }];
+
+  async function callGemini(contents){
+    var url = "https://generativelanguage.googleapis.com/v1beta/models/" +
+      encodeURIComponent(MODEL) + ":generateContent?key=" + encodeURIComponent(state.apiKey);
+    var body = {
+      systemInstruction: { parts: [{ text: state.persona + TOOL_INSTRUCTIONS }] },
+      contents: contents,
+      tools: TOOLS,
+      generationConfig: { temperature:0.95, maxOutputTokens:160 }
+    };
+    var res = await fetch(url, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(body)
+    });
+    if(!res.ok){
+      var errJson = await res.json().catch(function(){ return null; });
+      var apiMsg = errJson && errJson.error && errJson.error.message ? errJson.error.message : "";
+      if(res.status === 400 || res.status === 403){
+        throw new Error("رفض الطلب — المفتاح غلط أو غير مفعّل. " + (apiMsg ? "(" + apiMsg + ")" : ""));
+      }
+      if(res.status === 429){
+        throw new Error("تجاوزت الحد المسموح من الطلبات الحين، جرب بعد شوي.");
+      }
+      throw new Error("رفض الطلب (" + res.status + "). " + (apiMsg ? apiMsg : ""));
+    }
+    return res.json();
+  }
+
+  async function askGemini(text, name){
+    if(!state.apiKey){
+      return {ok:false, msg:"محتاج مفتاح Gemini API من الإعدادات (⚙) الأول."};
+    }
+    var who = (name || "مشاهد").trim() || "مشاهد";
+
+    if(isBanned(who)){
+      return {ok:false, msg:"\"" + who + "\" محظور داخل التطبيق، ما راح يرد عليه.", silent:true};
+    }
+
+    var contents = [{ role:"user", parts:[{ text: "تعليق من المشاهد \"" + who + "\": " + text }] }];
+
+    try{
+      var data = await callGemini(contents);
+      var cand = data && data.candidates && data.candidates[0];
+      var parts = (cand && cand.content && cand.content.parts) || [];
+
+      var spokenText = "";
+      var banCall = null;
+      parts.forEach(function(p){
+        if(p.text) spokenText += p.text;
+        if(p.functionCall && p.functionCall.name === "حظر_معلق") banCall = p.functionCall;
+      });
+
+      if(banCall){
+        var args = banCall.args || {};
+        var targetName = (args.name || who).trim();
+        banUser(targetName, args.reason || "");
+
+        // Send the function result back so the model can confirm out loud in its own voice/persona.
+        var followupContents = contents.concat([
+          { role:"model", parts: parts },
+          { role:"user", parts:[{ functionResponse: { name:"حظر_معلق", response:{ status:"تم الحظر داخل التطبيق" } } }] }
+        ]);
+        try{
+          var data2 = await callGemini(followupContents);
+          var cand2 = data2 && data2.candidates && data2.candidates[0];
+          var parts2 = (cand2 && cand2.content && cand2.content.parts) || [];
+          var spokenText2 = "";
+          parts2.forEach(function(p){ if(p.text) spokenText2 += p.text; });
+          if(spokenText2.trim()) spokenText = spokenText2;
+        }catch(e2){ /* fall back to whatever text we already have */ }
+
+        if(!spokenText.trim()) spokenText = "حظرته، خلاص ما يرجع يتكلم.";
+        return {ok:true, text: spokenText.trim(), banned: targetName};
+      }
+
+      if(!spokenText.trim()){
+        var reason = cand && cand.finishReason;
+        return {ok:false, msg:"ما رجع رد من Gemini" + (reason ? " (" + reason + ")" : "") + "، جرب مرة ثانية."};
+      }
+      return {ok:true, text: spokenText.trim()};
+    }catch(e){
+      return {ok:false, msg: e && e.message ? e.message : "تعذّر الاتصال بـ Gemini — تأكد من الإنترنت."};
+    }
+  }
+
+  // ================= composer =================
+  var sendBtn = document.getElementById('sendBtn');
+  var commentInput = document.getElementById('commentInput');
+  var commenterNameInput = document.getElementById('commenterName');
+
+  async function handleSend(){
+    var text = commentInput.value.trim();
+    if(!text) return;
+    var who = commenterNameInput.value.trim();
+    commentInput.value = "";
+    sendBtn.disabled = true;
+    captionEl.textContent = "…";
+
+    var result = await askGemini(text, who);
+    sendBtn.disabled = false;
+
+    if(result.ok){
+      speak(result.text);
+      if(result.banned) showError("تم حظر \"" + result.banned + "\" داخل التطبيق.");
+    } else {
+      captionEl.textContent = "";
+      showError(result.msg);
+      if(!state.apiKey) openSheet();
+    }
+  }
+  sendBtn.addEventListener('click', handleSend);
+  commentInput.addEventListener('keydown', function(e){ if(e.key === 'Enter') handleSend(); });
+  commentInput.addEventListener('focus', function(){ document.body.classList.remove('hide-chrome'); });
+  commenterNameInput.addEventListener('focus', function(){ document.body.classList.remove('hide-chrome'); });
+
+  renderBannedList();
+
+  // ================= live comments relay (connects to Termux server.js) =================
+  var liveBtn = document.getElementById('liveBtn');
+  var liveBadge = document.getElementById('liveBadge');
+  var liveBadgeText = document.getElementById('liveBadgeText');
+  var ws = null;
+  var wsWanted = false;         // المستخدم ضاغط زر الاتصال
+  var wsReconnectTimer = null;
+  var commentQueue = [];
+  var processingQueue = false;
+
+  function setLiveBadge(state3, text){
+    liveBadge.classList.toggle('on', state3 === 'on');
+    liveBadgeText.textContent = text;
+  }
+
+  function enqueueComment(name, text){
+    commentQueue.push({ name: name, text: text });
+    drainQueue();
+  }
+
+  async function drainQueue(){
+    if(processingQueue) return;
+    processingQueue = true;
+    while(commentQueue.length){
+      var item = commentQueue.shift();
+      captionEl.textContent = "…";
+      var result = await askGemini(item.text, item.name);
+      if(result.ok){
+        speak(result.text);
+        if(result.banned) showError("تم حظر \"" + result.banned + "\" داخل التطبيق.");
+        // ننتظر لين يخلص النطق قبل لا ناخذ تعليق ثاني عشان ما يتداخل الصوت
+        await new Promise(function(res){
+          var check = setInterval(function(){
+            if(!speaking){ clearInterval(check); res(); }
+          }, 150);
+        });
+      } else if(!result.silent){
+        showError(result.msg);
+      }
+    }
+    processingQueue = false;
+  }
+
+  function connectLive(){
+    wsWanted = true;
+    var url = (state.wsUrl || "").trim();
+    if(!url){
+      showError("حط عنوان الخادم المحلي بالإعدادات أول (مثال: ws://127.0.0.1:8765).");
+      openSheet();
+      wsWanted = false;
+      return;
+    }
+    try{ if(ws) ws.close(); }catch(e){}
+    setLiveBadge('connecting', "يحاول الاتصال…");
+    try{
+      ws = new WebSocket(url);
+    }catch(e){
+      setLiveBadge('off', "عنوان الخادم غلط");
+      showError("عنوان الخادم المحلي غير صالح.");
+      wsWanted = false;
+      return;
+    }
+    ws.onopen = function(){
+      setLiveBadge('on', "متصل بخادم التعليقات الحية");
+      liveBtn.style.opacity = 1;
+    };
+    ws.onmessage = function(ev){
+      var data;
+      try{ data = JSON.parse(ev.data); }catch(e){ return; }
+      if(data.type === 'comment' && data.text){
+        enqueueComment(data.name || "مشاهد", data.text);
+      } else if(data.type === 'status'){
+        setLiveBadge(data.connected ? 'on' : 'off',
+          data.connected ? "متصل ببث تيك توك" : ("انقطع عن تيك توك" + (data.error ? (" — " + data.error) : "")));
+      }
+    };
+    ws.onclose = function(){
+      setLiveBadge('off', "الخادم المحلي غير متصل");
+      if(wsWanted){
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = setTimeout(connectLive, 4000); // إعادة محاولة تلقائية
+      }
+    };
+    ws.onerror = function(){
+      setLiveBadge('off', "تعذّر الاتصال بالخادم المحلي");
+    };
+  }
+
+  function disconnectLive(){
+    wsWanted = false;
+    clearTimeout(wsReconnectTimer);
+    try{ if(ws) ws.close(); }catch(e){}
+    setLiveBadge('off', "الخادم المحلي غير متصل");
+  }
+
+  liveBtn.addEventListener('click', function(){
+    if(wsWanted) disconnectLive(); else connectLive();
+  });
+
+})();
+</script>
+</body>
+</html>
